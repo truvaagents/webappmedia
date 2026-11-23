@@ -1,7 +1,5 @@
 package org.rgddallas.media.web.rest;
 
-import javafx.geometry.VPos;
-import org.apache.commons.lang.StringUtils;
 import org.rgddallas.media.entity.VideoPlayback;
 import org.rgddallas.media.entity.VideoPlaybackRepository;
 import org.slf4j.Logger;
@@ -25,7 +23,7 @@ import java.util.List;
 public class PlaybackSequenceController {
     public static final Logger log = LoggerFactory.getLogger(MediaResource.class);
 
-    private VideoPlaybackRepository videoPlaybackRepository;
+    private final VideoPlaybackRepository videoPlaybackRepository;
 
     @Autowired
     public PlaybackSequenceController(VideoPlaybackRepository videoPlaybackRepository) {
@@ -39,7 +37,7 @@ public class PlaybackSequenceController {
      */
     @GetMapping
     public Long getSequence() {
-        List<VideoPlayback> list = (List<VideoPlayback>) videoPlaybackRepository.findAll();
+        List<VideoPlayback> list = videoPlaybackRepository.findAll();
 
         return CollectionUtils.isEmpty(list) ? 0 : list.get(0).getFileSequence();
     }
@@ -53,7 +51,7 @@ public class PlaybackSequenceController {
     public String resetPlaybackSeq() {
         log.debug("Got request to reset the sequence");
 
-        List<VideoPlayback> entities = (List<VideoPlayback>) videoPlaybackRepository.findAll();
+        List<VideoPlayback> entities = videoPlaybackRepository.findAll();
 
         VideoPlayback entity = CollectionUtils.isEmpty(entities) ? null : entities.get(0);
 
@@ -81,7 +79,7 @@ public class PlaybackSequenceController {
     public String incrementSeq() {
         log.debug("Got request to increment seq value");
 
-        List<VideoPlayback> entities = (List<VideoPlayback>) videoPlaybackRepository.findAll();
+        List<VideoPlayback> entities = videoPlaybackRepository.findAll();
 
         VideoPlayback entity = CollectionUtils.isEmpty(entities) ? null : entities.get(0);
 
@@ -109,7 +107,7 @@ public class PlaybackSequenceController {
     public String decreaseSeq() {
         log.debug("Got request to decrement seq value");
 
-        List<VideoPlayback> entities = (List<VideoPlayback>) videoPlaybackRepository.findAll();
+        List<VideoPlayback> entities = videoPlaybackRepository.findAll();
 
         VideoPlayback entity = CollectionUtils.isEmpty(entities) ? null : entities.get(0);
 
@@ -140,8 +138,8 @@ public class PlaybackSequenceController {
 
         Long result = 0L;
 
-        if(StringUtils.isNotEmpty(newSeq)) {
-            List<VideoPlayback> entities = (List<VideoPlayback>) videoPlaybackRepository.findAll();
+        if (newSeq != null && !newSeq.isEmpty()) {
+            List<VideoPlayback> entities = videoPlaybackRepository.findAll();
 
             VideoPlayback entity = CollectionUtils.isEmpty(entities) ? null : entities.get(0);
 
@@ -167,6 +165,6 @@ public class PlaybackSequenceController {
      */
     @GetMapping("/records")
     public List<VideoPlayback> getVideoPlaybackRecords() {
-        return (List<VideoPlayback>) videoPlaybackRepository.findAll();
+        return videoPlaybackRepository.findAll();
     }
 }
