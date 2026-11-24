@@ -1,10 +1,10 @@
 package org.rgddallas.media.entity;
 
-import javax.persistence.Entity;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
-import javax.persistence.Id;
-import java.time.LocalDate;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.SequenceGenerator;
 import java.time.LocalDateTime;
 
 /**
@@ -14,7 +14,9 @@ import java.time.LocalDateTime;
 public class VideoPlayback {
 
     @Id
-    @GeneratedValue(strategy= GenerationType.AUTO)
+    // Keep the Hibernate 5 sequence and allocation size used by existing databases.
+    @SequenceGenerator(name = "playbackIds", sequenceName = "hibernate_sequence", allocationSize = 1)
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "playbackIds")
     private Long id;
 
     private Long fileSequence;
