@@ -1,23 +1,22 @@
 package org.rgddallas.media.web.rest;
 
-import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang.StringUtils;
-import org.apache.tomcat.jni.Local;
+import jakarta.servlet.http.HttpServletResponse;
 import org.rgddallas.media.entity.VideoPlayback;
 import org.rgddallas.media.entity.VideoPlaybackRepository;
 import org.rgddallas.media.util.FileSearchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.io.InputStreamResource;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.CollectionUtils;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
-import javax.servlet.http.HttpServletResponse;
 import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Random;
@@ -44,11 +43,19 @@ public class MediaResource {
     public static final String AUDIO_LOCATION = "/volume1/music/Arti/";
     //public static final String AUDIO_LOCATION = "C:\\temp\\";
 
-    private VideoPlaybackRepository videoPlaybackRepo;
+    private final VideoPlaybackRepository videoPlaybackRepo;
+    private final String audioLocation;
+    private final String videoLocation;
+    private final String videoKirtanLocation;
 
-    @Autowired
-    public MediaResource(VideoPlaybackRepository videoPlaybackRepo) {
+    public MediaResource(VideoPlaybackRepository videoPlaybackRepo,
+                         @Value("${media.audio-location:" + AUDIO_LOCATION + "}") String audioLocation,
+                         @Value("${media.video-location:" + VIDEO_LOCATION + "}") String videoLocation,
+                         @Value("${media.video-kirtan-location:" + VIDEO_KIRTAN_LOCATION + "}") String videoKirtanLocation) {
         this.videoPlaybackRepo = videoPlaybackRepo;
+        this.audioLocation = audioLocation;
+        this.videoLocation = videoLocation;
+        this.videoKirtanLocation = videoKirtanLocation;
     }
 
     /**
@@ -57,11 +64,12 @@ public class MediaResource {
      * @param fileName file to return, with no spaces
      * @return audio content as a byte stream
      */
-    @GetMapping(value = "/audio/{fileName}", produces = "audio/mpeg")
-    public ResponseEntity<byte[]> getAudio(@PathVariable String fileName) {
+    @GetMapping(value = {"/audio/{fileName}", "/audio/{fileName}/",
+            "/audio2/{fileName}", "/audio2/{fileName}/"}, produces = "audio/mpeg")
+    public ResponseEntity<byte[]> getAudio(@PathVariable("fileName") String fileName) {
         log.info("Got Audio file request for file {}", fileName);
 
-        return getMediaAsStream(AUDIO_LOCATION, fileName, MP3_EXTN);
+        return getMediaAsStream(audioLocation, fileName, MP3_EXTN);
     }
 
     /**
@@ -70,81 +78,50 @@ public class MediaResource {
      * then same file is returned and the sequence remains unchanged.
      *
      */
-    @GetMapping(value = "/video2", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
-    public void getTodaysVideoToPlay(OutputStream output) throws IOException {
+    @GetMapping(value = {"/video2", "/video2/"}, produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
+    public void getTodaysVideoToPlay(HttpServletResponse response) throws IOException {
 
-        Long sequenceToUse = 1L;
         List<VideoPlayback> videoSeqList = (List<VideoPlayback>) videoPlaybackRepo.findAll();
 
-        VideoPlayback videoPlayback = null;
-        if (!CollectionUtils.isEmpty(videoSeqList)) {
-            videoPlayback = videoSeqList.get(0);
+        VideoPlayback videoPlayback = videoSeqList.isEmpty() ? new VideoPlayback() : videoSeqList.getFirst();
+        long sequenceToUse = videoPlayback.getFileSequence() == null ? 1L : videoPlayback.getFileSequence();
+        LocalDateTime lastPlayed = videoPlayback.getLastPlayed();
+        if (lastPlayed != null && lastPlayed.toLocalDate().equals(LocalDateTime.now().toLocalDate())) {
+            sequenceToUse--;
         }
 
-        if (LocalDateTime.now().getDayOfMonth() != videoPlayback.getLastPlayed().getDayOfMonth()) {
-            sequenceToUse = videoPlayback.getFileSequence();
-        } else {
-            sequenceToUse = videoPlayback.getFileSequence() - 1;
-        }
-
-        //String queryStr = "[0]*<seq>[a-zA-Z_-].*";
-        String queryStr = "[0]*<seq>_.*";
-        if (videoPlayback != null) {
-            String seq = Long.toString(sequenceToUse);
-
-            //prepare the regex for matching
-            if (StringUtils.isNotEmpty(seq)) {
-                queryStr = queryStr.replace("<seq>", seq);
-                log.debug("Regex to match is : {}", queryStr);
-            }
-        }
-
-        log.debug("File pattern to search : {}", queryStr);
-
-
-        File file = new File(getFileAsInputStream(VIDEO_LOCATION, queryStr, MP4_EXTN));
-
-        if (file.canRead()) {
+        File file = new File(getFileAsInputStream(videoLocation, "0*" + sequenceToUse + "_.*", MP4_EXTN));
+        if (file.isFile() && file.canRead()) {
             updateSequence(videoPlayback, sequenceToUse + 1L);
         } else {//reset the sequence to 1 to start playing from the first video
             log.info("File not found for sequence {}, defaulting to Sequence number 1", sequenceToUse);
-
-            queryStr = "[0]*<seq>_.*";
-            queryStr = queryStr.replace("<seq>", "1");
-            file = new File(getFileAsInputStream(VIDEO_LOCATION, queryStr, MP4_EXTN));
+            file = new File(getFileAsInputStream(videoLocation, "0*1_.*", MP4_EXTN));
         }
-
-        InputStream inputStream = new FileInputStream(file);
-
-        IOUtils.copy(inputStream, output);
+        writeVideo(file, response);
     }
 
     /**
      * REST Endpoint to send the video kirtna file stream.
      *
-     * @param output
+     * @param response
      * @throws IOException
      */
-    @GetMapping(value = "/video-kirtan", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
-    public void getVideoToPlay(OutputStream output) throws IOException {
+    @GetMapping(value = {"/video-kirtan", "/video-kirtan/"}, produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
+    public void getVideoToPlay(HttpServletResponse response) throws IOException {
+        File[] files = new File(videoKirtanLocation).listFiles(file -> file.isFile() && file.canRead());
+        if (files == null || files.length == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        }
+        writeVideo(files[new Random().nextInt(files.length)], response);
+    }
 
-        String pathToFetch = VIDEO_KIRTAN_LOCATION;
-
-        File folder = new File(pathToFetch);
-        File[] files = folder.listFiles();
-
-        int totalFiles = files.length;
-        log.info("Total files inside the folder - {}", totalFiles);
-
-        Random random = new Random();
-        int index = random.nextInt(totalFiles);
-        log.info("File - {}", index);
-
-        InputStream inputStream = new FileInputStream(files[index]);
-
-        log.info("Got file input stream");
-
-        IOUtils.copy(inputStream, output);
+    private void writeVideo(File file, HttpServletResponse response) throws IOException {
+        if (!file.isFile() || !file.canRead()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        }
+        response.setContentType(MediaType.APPLICATION_OCTET_STREAM_VALUE);
+        response.setContentLengthLong(file.length());
+        Files.copy(file.toPath(), response.getOutputStream());
     }
 
     /**
@@ -184,16 +161,16 @@ public class MediaResource {
         try {
             byte[] byteStream = getFileStreamAsByteArray(location, fileName, fileExtension);
             if (byteStream != null) {
-                response = new ResponseEntity<byte[]>(byteStream, HttpStatus.OK);
+                response = ResponseEntity.ok().contentType(MediaType.parseMediaType("audio/mpeg")).body(byteStream);
             } else {
                 throw new FileNotFoundException();
             }
         } catch (FileNotFoundException e) {
             log.error("No file found ", e);
-            response = new ResponseEntity("File Not Found", HttpStatus.BAD_REQUEST);
+            response = ResponseEntity.badRequest().body("File Not Found".getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) {
             log.error("IO Exception ", e);
-            response = new ResponseEntity("Internal Server Error", HttpStatus.INTERNAL_SERVER_ERROR);
+            response = ResponseEntity.internalServerError().body("Internal Server Error".getBytes(StandardCharsets.UTF_8));
         }
 
         return response;
@@ -209,16 +186,13 @@ public class MediaResource {
      * @throws IOException
      */
     public byte[] getFileStreamAsByteArray(String fileLocation, String fileName, String fileExtension) throws IOException {
-        byte[] bytes = null;
         FileSearchService fileSearchService = new FileSearchService();
-
-        InputStream inputStream = null;
 
         String fileToSearch = fileName + fileExtension;
         log.debug("file to search {}", fileToSearch);
         List<String> filesFound = null;
 
-        if (fileExtension == MP4_EXTN) {
+        if (MP4_EXTN.equals(fileExtension)) {
             filesFound = fileSearchService.searchDirectory(new File(fileLocation), fileToSearch, true);
 
         } else {
@@ -230,15 +204,7 @@ public class MediaResource {
 
         filesFound.forEach(file -> log.debug("List of files found {}", file));
 
-        if (!CollectionUtils.isEmpty(filesFound)) {
-            inputStream = new FileInputStream(filesFound.get(0));
-        }
-
-        if (inputStream != null) {
-            bytes = IOUtils.toByteArray(inputStream);
-        }
-
-        return bytes;
+        return filesFound.isEmpty() ? null : Files.readAllBytes(new File(filesFound.getFirst()).toPath());
     }
 
     /**
@@ -249,7 +215,6 @@ public class MediaResource {
      * @throws IOException
      */
     public String getFileAsInputStream(String fileLocation, String fileName, String fileExtension) throws IOException {
-        byte[] bytes = null;
         FileSearchService fileSearchService = new FileSearchService();
 
         String fileFound = "";
@@ -258,10 +223,10 @@ public class MediaResource {
         log.debug("file to search {}", fileToSearch);
         List<String> filesFound = null;
 
-        if (fileExtension == MP4_EXTN) {
+        if (MP4_EXTN.equals(fileExtension)) {
             filesFound = fileSearchService.searchDirectory(new File(fileLocation), fileToSearch, true);
 
-        } else if (fileExtension == KIRTAN) {
+        } else if (KIRTAN.equals(fileExtension)) {
             filesFound = fileSearchService.searchDirectory(new File(fileLocation), fileLocation, true);
         }
 
